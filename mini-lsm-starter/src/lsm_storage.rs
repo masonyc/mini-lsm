@@ -298,8 +298,10 @@ impl LsmStorageInner {
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        let state_guard = self.state.read();
-        let lsm_state: Arc<LsmStorageState> = Arc::clone(&*state_guard);
+        let lsm_state: Arc<LsmStorageState> = {
+            let state_guard = self.state.read();
+            Arc::clone(&*state_guard)
+        };
 
         if let Some(value) = lsm_state.memtable.get(key) {
             if value.is_empty() {
@@ -330,8 +332,10 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let state_guard = self.state.read();
-        let lsm_state: Arc<LsmStorageState> = Arc::clone(&*state_guard);
+        let lsm_state: Arc<LsmStorageState> = {
+            let state_guard = self.state.read();
+            Arc::clone(&*state_guard)
+        };
         lsm_state
             .memtable
             .put(key, value)
@@ -356,8 +360,10 @@ impl LsmStorageInner {
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        let state_guard = self.state.read();
-        let lsm_state: Arc<LsmStorageState> = Arc::clone(&*state_guard);
+        let lsm_state: Arc<LsmStorageState> = {
+            let state_guard = self.state.read();
+            Arc::clone(&*state_guard)
+        };
         lsm_state
             .memtable
             .put(key, &[])

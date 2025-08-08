@@ -110,6 +110,7 @@ impl MemTable {
             key.len() + value.len(),
             std::sync::atomic::Ordering::Relaxed,
         );
+
         Ok(())
     }
 
