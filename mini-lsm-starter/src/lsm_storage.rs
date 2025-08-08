@@ -300,7 +300,27 @@ impl LsmStorageInner {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let state_guard = self.state.read();
         let lsm_state: Arc<LsmStorageState> = Arc::clone(&*state_guard);
-        Ok(lsm_state.memtable.get(key))
+
+        if let Some(value) = lsm_state.memtable.get(key) {
+            if value.is_empty() {
+                return Ok(None);
+            } else {
+                return Ok(Some(value));
+            }
+        }
+
+        // Then check immutable memtables, from newest to oldest
+        for mem in &lsm_state.imm_memtables {
+            if let Some(value) = mem.get(key) {
+                if value.is_empty() {
+                    return Ok(None);
+                } else {
+                    return Ok(Some(value));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
