@@ -315,7 +315,23 @@ impl LsmStorageInner {
         lsm_state
             .memtable
             .put(key, value)
-            .map_err(|e| anyhow!("Falied to put {}", e))
+            .map_err(|e| anyhow!("Falied to put {}", e))?;
+
+        self.check_and_freeze_memtable_if_needed(&lsm_state)
+    }
+
+    fn check_and_freeze_memtable_if_needed(&self, lsm_state: &Arc<LsmStorageState>) -> Result<()> {
+        if self.memtable_exceeds_limit(lsm_state) {
+            let state_lock = self.state_lock.lock();
+            if self.memtable_exceeds_limit(lsm_state) {
+                self.force_freeze_memtable(&state_lock)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn memtable_exceeds_limit(&self, state: &LsmStorageState) -> bool {
+        state.memtable.approximate_size() >= self.options.target_sst_size
     }
 
     /// Remove a key from the storage by writing an empty value.
@@ -325,7 +341,9 @@ impl LsmStorageInner {
         lsm_state
             .memtable
             .put(key, &[])
-            .map_err(|e| anyhow!("Falied to put {}", e))
+            .map_err(|e| anyhow!("Falied to put {}", e))?;
+
+        self.check_and_freeze_memtable_if_needed(&lsm_state)
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
@@ -349,8 +367,27 @@ impl LsmStorageInner {
     }
 
     /// Force freeze the current memtable to an immutable memtable
-    pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        unimplemented!()
+    pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
+        let new_memtable = MemTable::create(self.next_sst_id());
+
+        {
+            let mut state_guard = self.state.write();
+
+            let mut new_state = (**state_guard).clone();
+
+            // Push current memtable to front of immutable list - front is latest
+            new_state
+                .imm_memtables
+                .insert(0, Arc::clone(&new_state.memtable));
+
+            // Replace memtable with a new one
+            new_state.memtable = Arc::new(new_memtable);
+
+            // Store the updated state back into the Arc
+            *state_guard = Arc::new(new_state);
+        }
+
+        Ok(())
     }
 
     /// Force flush the earliest-created immutable memtable to disk
