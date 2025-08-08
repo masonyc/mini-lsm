@@ -332,44 +332,44 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let lsm_state: Arc<LsmStorageState> = {
+        let size;
+        {
             let state_guard = self.state.read();
-            Arc::clone(&*state_guard)
+            state_guard
+                .memtable
+                .put(key, value)
+                .map_err(|e| anyhow!("Falied to put {}", e))?;
+            size = state_guard.memtable.approximate_size();
         };
-        lsm_state
-            .memtable
-            .put(key, value)
-            .map_err(|e| anyhow!("Falied to put {}", e))?;
 
-        self.check_and_freeze_memtable_if_needed(&lsm_state)
+        self.check_and_freeze_memtable_if_needed(size)
     }
 
-    fn check_and_freeze_memtable_if_needed(&self, lsm_state: &Arc<LsmStorageState>) -> Result<()> {
-        if self.memtable_exceeds_limit(lsm_state) {
+    fn check_and_freeze_memtable_if_needed(&self, size: usize) -> Result<()> {
+        if size >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
-            if self.memtable_exceeds_limit(lsm_state) {
+            let guard = self.state.read();
+            if guard.memtable.approximate_size() >= self.options.target_sst_size {
+                drop(guard);
                 self.force_freeze_memtable(&state_lock)?;
             }
         }
         Ok(())
     }
 
-    fn memtable_exceeds_limit(&self, state: &LsmStorageState) -> bool {
-        state.memtable.approximate_size() >= self.options.target_sst_size
-    }
-
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        let lsm_state: Arc<LsmStorageState> = {
+        let size;
+        {
             let state_guard = self.state.read();
-            Arc::clone(&*state_guard)
+            state_guard
+                .memtable
+                .put(key, &[])
+                .map_err(|e| anyhow!("Falied to delete {}", e))?;
+            size = state_guard.memtable.approximate_size();
         };
-        lsm_state
-            .memtable
-            .put(key, &[])
-            .map_err(|e| anyhow!("Falied to put {}", e))?;
 
-        self.check_and_freeze_memtable_if_needed(&lsm_state)
+        self.check_and_freeze_memtable_if_needed(size)
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
@@ -394,23 +394,18 @@ impl LsmStorageInner {
 
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        let new_memtable = MemTable::create(self.next_sst_id());
-
+        let new_memtable = Arc::new(MemTable::create(self.next_sst_id()));
+        let old_memtable;
         {
-            let mut state_guard = self.state.write();
+            let mut guard = self.state.write();
 
-            let mut new_state = (**state_guard).clone();
-
+            let mut cloned_state = guard.as_ref().clone();
+            old_memtable = std::mem::replace(&mut cloned_state.memtable, new_memtable);
             // Push current memtable to front of immutable list - front is latest
-            new_state
-                .imm_memtables
-                .insert(0, Arc::clone(&new_state.memtable));
-
-            // Replace memtable with a new one
-            new_state.memtable = Arc::new(new_memtable);
+            cloned_state.imm_memtables.insert(0, old_memtable);
 
             // Store the updated state back into the Arc
-            *state_guard = Arc::new(new_state);
+            *guard = Arc::new(cloned_state);
         }
 
         Ok(())
