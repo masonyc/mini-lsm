@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use anyhow::Result;
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
@@ -127,8 +127,27 @@ impl MemTable {
     }
 
     /// Get an iterator over a range of keys.
-    pub fn scan(&self, _lower: Bound<&[u8]>, _upper: Bound<&[u8]>) -> MemTableIterator {
-        unimplemented!()
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
+        let lower_bound = match lower {
+            Bound::Included(s) => Bound::Included(Bytes::copy_from_slice(s)),
+            Bound::Excluded(s) => Bound::Excluded(Bytes::copy_from_slice(s)),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        let upper_bound = match upper {
+            Bound::Included(s) => Bound::Included(Bytes::copy_from_slice(s)),
+            Bound::Excluded(s) => Bound::Excluded(Bytes::copy_from_slice(s)),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        let mut iter = MemTableIteratorBuilder {
+            map: self.map.clone(),
+            iter_builder: |map_ref| map_ref.range((lower_bound, upper_bound)),
+            item: (Bytes::new(), Bytes::new()),
+        }
+        .build();
+        iter.next().expect("Failed to advance to iterator");
+        iter
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
@@ -174,18 +193,32 @@ impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.with_item(|entry| entry.1.as_ref())
     }
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.with_item(|entry| KeySlice::from_slice(entry.0.as_ref()))
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.with_item(|entry| entry.0 != Bytes::new() && entry.1 != Bytes::new())
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let next_item = self.with_iter_mut(|iter| {
+            iter.next()
+                .map(|item| (item.key().clone(), item.value().clone()))
+        });
+
+        if let Some(entry) = next_item {
+            self.with_item_mut(|item| {
+                *item = entry;
+            });
+        } else {
+            self.with_item_mut(|item| {
+                *item = (Bytes::new(), Bytes::new());
+            });
+        }
+        Ok(())
     }
 }
