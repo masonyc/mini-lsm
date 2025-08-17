@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::cmp::{self};
 use std::collections::BinaryHeap;
+use std::collections::binary_heap::PeekMut;
+use std::mem;
 
 use anyhow::{Ok, Result};
 
@@ -59,15 +58,29 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
+        if iters.is_empty() {
+            return Self {
+                iters: BinaryHeap::new(),
+                current: None,
+            };
+        }
         let mut heap = BinaryHeap::new();
+        if iters.iter().all(|x| !x.is_valid()) {
+            let mut iters = iters;
+            return Self {
+                iters: heap,
+                current: Some(HeapWrapper(0, iters.pop().unwrap())),
+            };
+        }
         for (idx, iter) in iters.into_iter().enumerate() {
             if iter.is_valid() {
                 heap.push(HeapWrapper(idx, iter));
             }
         }
+        let first = heap.pop();
         Self {
             iters: heap,
-            current: None,
+            current: first,
         }
     }
 }
@@ -78,12 +91,10 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        assert!(self.is_valid(), "called key() on invalid MergeIterator");
         self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        assert!(self.is_valid(), "called value() on invalid MergeIterator");
         self.current.as_ref().unwrap().1.value()
     }
 
@@ -94,47 +105,36 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
-        // Pop the "winner" iterator (smallest key)
-        let mut winner = match self.iters.pop() {
-            Some(wrapper) => wrapper,
-            None => {
-                self.current = None;
-                return Ok(());
-            }
-        };
+        let current = self.current.as_mut().unwrap();
 
-        let current_key = winner.1.key();
+        while let Some(mut inner_iter) = self.iters.peek_mut() {
+            if inner_iter.1.key() == current.1.key() {
+                if let e @ Err(_) = inner_iter.1.next() {
+                    PeekMut::pop(inner_iter);
+                    return e;
+                }
 
-        // Process all other iterators in the heap
-        let mut temp_heap = Vec::new();
-        while let Some(mut wrapper) = self.iters.pop() {
-            if wrapper.1.key() == current_key {
-                // Duplicate key: advance it
-                wrapper.1.next()?;
-            }
-            if wrapper.1.is_valid() {
-                temp_heap.push(wrapper);
+                if !inner_iter.1.is_valid() {
+                    PeekMut::pop(inner_iter);
+                    break;
+                }
             }
         }
 
-        // Push all processed iterators back into the heap
-        for wrapper in temp_heap {
-            self.iters.push(wrapper);
+        current.1.next()?;
+
+        if !current.1.is_valid() {
+            if let Some(next) = self.iters.pop() {
+                *current = next;
+            }
+            return Ok(());
         }
 
-        // Set current to the winner for key/value access
-        self.current = Some(HeapWrapper(winner.0, winner.1));
-
-        // Advance the winner iterator and push back if still valid
-        if let Some(current) = &mut self.current {
-            current.1.next()?;
-            if current.1.is_valid() {
-                // Move it back into the heap
-                let to_push = self.current.take().unwrap();
-                self.iters.push(to_push);
+        if let Some(mut inner_iter) = self.iters.peek_mut() {
+            if *current < *inner_iter {
+                mem::swap(&mut *inner_iter, current);
             }
         }
-
         Ok(())
     }
 }
