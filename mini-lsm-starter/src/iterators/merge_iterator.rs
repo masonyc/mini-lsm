@@ -18,7 +18,7 @@
 use std::cmp::{self};
 use std::collections::BinaryHeap;
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 
 use crate::key::KeySlice;
 
@@ -59,7 +59,16 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap = BinaryHeap::new();
+        for (idx, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(idx, iter));
+            }
+        }
+        Self {
+            iters: heap,
+            current: None,
+        }
     }
 }
 
@@ -69,18 +78,63 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        assert!(self.is_valid(), "called key() on invalid MergeIterator");
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        assert!(self.is_valid(), "called value() on invalid MergeIterator");
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current
+            .as_ref()
+            .is_some_and(|wrapper| wrapper.1.is_valid())
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        // Pop the "winner" iterator (smallest key)
+        let mut winner = match self.iters.pop() {
+            Some(wrapper) => wrapper,
+            None => {
+                self.current = None;
+                return Ok(());
+            }
+        };
+
+        let current_key = winner.1.key();
+
+        // Process all other iterators in the heap
+        let mut temp_heap = Vec::new();
+        while let Some(mut wrapper) = self.iters.pop() {
+            if wrapper.1.key() == current_key {
+                // Duplicate key: advance it
+                wrapper.1.next()?;
+            }
+            if wrapper.1.is_valid() {
+                temp_heap.push(wrapper);
+            }
+        }
+
+        // Push all processed iterators back into the heap
+        for wrapper in temp_heap {
+            self.iters.push(wrapper);
+        }
+
+        // Set current to the winner for key/value access
+        self.current = Some(HeapWrapper(winner.0, winner.1));
+
+        // Advance the winner iterator and push back if still valid
+        if let Some(current) = &mut self.current {
+            current.1.next()?;
+            if current.1.is_valid() {
+                // Move it back into the heap
+                let to_push = self.current.take().unwrap();
+                self.iters.push(to_push);
+            }
+        }
+
+        Ok(())
     }
 }
