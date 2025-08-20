@@ -125,25 +125,15 @@ impl MemTable {
 
     /// Get an iterator over a range of keys.
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
-        let lower_bound = match lower {
-            Bound::Included(s) => Bound::Included(Bytes::copy_from_slice(s)),
-            Bound::Excluded(s) => Bound::Excluded(Bytes::copy_from_slice(s)),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-
-        let upper_bound = match upper {
-            Bound::Included(s) => Bound::Included(Bytes::copy_from_slice(s)),
-            Bound::Excluded(s) => Bound::Excluded(Bytes::copy_from_slice(s)),
-            Bound::Unbounded => Bound::Unbounded,
-        };
+        let (lower, upper) = (map_bound(lower), map_bound(upper));
 
         let mut iter = MemTableIteratorBuilder {
             map: self.map.clone(),
-            iter_builder: |map| map.range((lower_bound, upper_bound)),
+            iter_builder: |map| map.range((lower, upper)),
             item: (Bytes::new(), Bytes::new()),
         }
         .build();
-        iter.next().expect("Failed to advance to iterator");
+        iter.next().expect("Failed to advance iterator.");
         iter
     }
 
