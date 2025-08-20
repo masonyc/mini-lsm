@@ -188,9 +188,7 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn is_valid(&self) -> bool {
-        dbg!("{:?}", self.borrow_item());
-        dbg!("{:?}", self.borrow_item().1.is_empty());
-        !self.borrow_item().1.is_empty()
+        self.with_item(|entry| !entry.0.is_empty())
     }
 
     fn next(&mut self) -> Result<()> {
@@ -205,7 +203,7 @@ impl StorageIterator for MemTableIterator {
             });
         } else {
             self.with_item_mut(|item| {
-                *item = (Bytes::new(), Bytes::new());
+                *item = (Bytes::from_static(&[]), Bytes::from_static(&[]));
             });
         }
         Ok(())
