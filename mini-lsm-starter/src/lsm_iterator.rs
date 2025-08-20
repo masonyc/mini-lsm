@@ -37,6 +37,7 @@ impl LsmIterator {
     }
 
     fn move_to_non_delete(&mut self) -> Result<()> {
+        // We want to skip the tombstone entry
         while self.is_valid() && self.inner.value().is_empty() {
             self.inner.next()?;
         }

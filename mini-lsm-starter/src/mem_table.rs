@@ -188,6 +188,8 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn is_valid(&self) -> bool {
+        // From iterator's perspective, empty value is valid
+        // Only empty key indicate it reaches end of the iterator
         self.with_item(|entry| !entry.0.is_empty())
     }
 
