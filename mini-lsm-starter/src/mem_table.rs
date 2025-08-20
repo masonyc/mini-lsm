@@ -139,7 +139,7 @@ impl MemTable {
 
         let mut iter = MemTableIteratorBuilder {
             map: self.map.clone(),
-            iter_builder: |map_ref| map_ref.range((lower_bound, upper_bound)),
+            iter_builder: |map| map.range((lower_bound, upper_bound)),
             item: (Bytes::new(), Bytes::new()),
         }
         .build();
@@ -198,7 +198,9 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn is_valid(&self) -> bool {
-        self.with_item(|entry| entry.0 != Bytes::new() && entry.1 != Bytes::new())
+        dbg!("{:?}", self.borrow_item());
+        dbg!("{:?}", self.borrow_item().1.is_empty());
+        !self.borrow_item().1.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
