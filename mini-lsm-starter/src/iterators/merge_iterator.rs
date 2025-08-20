@@ -116,7 +116,6 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
 
                 if !inner_iter.1.is_valid() {
                     PeekMut::pop(inner_iter);
-                    break;
                 }
             } else {
                 break;
@@ -135,12 +134,7 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         if let Some(mut inner_iter) = self.iters.peek_mut()
             && *current < *inner_iter
         {
-            dbg!(inner_iter.1.is_valid());
-            dbg!(current.1.key());
-            dbg!(inner_iter.1.key());
             mem::swap(&mut *inner_iter, current);
-            dbg!(current.1.key());
-            dbg!(inner_iter.1.key());
         }
         Ok(())
     }

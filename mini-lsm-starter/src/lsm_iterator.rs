@@ -94,19 +94,17 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
     }
 
     fn key(&self) -> Self::KeyType<'_> {
-        if self.is_valid() {
-            self.iter.key()
-        } else {
+        if !self.is_valid() {
             panic!("Called key() on an invalid iterator");
         }
+        self.iter.key()
     }
 
     fn value(&self) -> &[u8] {
-        if self.is_valid() {
-            self.iter.value()
-        } else {
+        if !self.is_valid() {
             panic!("Called value() on an invalid iterator");
         }
+        self.iter.value()
     }
 
     fn next(&mut self) -> Result<()> {

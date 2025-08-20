@@ -299,27 +299,23 @@ impl LsmStorageInner {
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        let lsm_state: Arc<LsmStorageState> = {
-            let state_guard = self.state.read();
-            Arc::clone(&*state_guard)
-        };
+        let state_guard = self.state.read();
+        let lsm_state = &state_guard;
 
         if let Some(value) = lsm_state.memtable.get(key) {
             if value.is_empty() {
                 return Ok(None);
-            } else {
-                return Ok(Some(value));
             }
+            return Ok(Some(value));
         }
 
         // Then check immutable memtables, from newest to oldest
-        for mem in &lsm_state.imm_memtables {
+        for mem in lsm_state.imm_memtables.iter() {
             if let Some(value) = mem.get(key) {
                 if value.is_empty() {
                     return Ok(None);
-                } else {
-                    return Ok(Some(value));
                 }
+                return Ok(Some(value));
             }
         }
 
@@ -336,10 +332,7 @@ impl LsmStorageInner {
         let size;
         {
             let state_guard = self.state.read();
-            state_guard
-                .memtable
-                .put(key, value)
-                .map_err(|e| anyhow!("Falied to put {}", e))?;
+            state_guard.memtable.put(key, value)?;
             size = state_guard.memtable.approximate_size();
         };
 
@@ -363,10 +356,7 @@ impl LsmStorageInner {
         let size;
         {
             let state_guard = self.state.read();
-            state_guard
-                .memtable
-                .put(key, &[])
-                .map_err(|e| anyhow!("Falied to delete {}", e))?;
+            state_guard.memtable.put(key, b"")?;
             size = state_guard.memtable.approximate_size();
         };
 
@@ -403,7 +393,7 @@ impl LsmStorageInner {
             let mut cloned_state = guard.as_ref().clone();
             old_memtable = std::mem::replace(&mut cloned_state.memtable, new_memtable);
             // Push current memtable to front of immutable list - front is latest
-            cloned_state.imm_memtables.insert(0, old_memtable);
+            cloned_state.imm_memtables.insert(0, old_memtable.clone());
 
             // Store the updated state back into the Arc
             *guard = Arc::new(cloned_state);
@@ -433,16 +423,15 @@ impl LsmStorageInner {
             Arc::clone(&state_guard)
         };
 
-        let mut iters = Vec::with_capacity(lsm_state.imm_memtables.len() + 1);
-        iters.push(Box::new(lsm_state.memtable.scan(lower, upper)));
+        let mut memtable_iters = Vec::with_capacity(lsm_state.imm_memtables.len() + 1);
+        memtable_iters.push(Box::new(lsm_state.memtable.scan(lower, upper)));
+
         lsm_state
             .imm_memtables
             .iter()
-            .for_each(|t| iters.push(Box::new(t.scan(lower, upper))));
+            .for_each(|t| memtable_iters.push(Box::new(t.scan(lower, upper))));
 
-        match LsmIterator::new(MergeIterator::create(iters)) {
-            Ok(iter) => Ok(FusedIterator::new(iter)),
-            Err(e) => Err(e),
-        }
+        let iter = MergeIterator::create(memtable_iters);
+        Ok(FusedIterator::new(LsmIterator::new(iter)?))
     }
 }
