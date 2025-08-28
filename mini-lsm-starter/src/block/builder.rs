@@ -64,14 +64,16 @@ impl BlockBuilder {
         self.data.put_u16(value.len() as u16);
         self.data.put(value);
 
-        self.first_key = key.to_key_vec();
+        if self.first_key.is_empty() {
+            self.first_key = key.to_key_vec();
+        }
 
         true
     }
 
     /// Check if there is no key-value pair in the block.
     pub fn is_empty(&self) -> bool {
-        self.first_key.is_empty()
+        self.offsets.is_empty()
     }
 
     /// Finalize the block.
