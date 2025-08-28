@@ -95,13 +95,13 @@ impl SsTableBuilder {
         Ok(SsTable {
             file,
             first_key: self.meta.first().unwrap().first_key.clone(),
-            last_key: self.meta.first().unwrap().last_key.clone(),
+            last_key: self.meta.last().unwrap().last_key.clone(),
             block_meta: self.meta,
             block_meta_offset: meta_offset,
             id,
             block_cache,
             bloom: None,
-            max_ts: u64::MAX,
+            max_ts: 0,
         })
     }
 

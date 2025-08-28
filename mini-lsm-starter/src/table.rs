@@ -155,14 +155,14 @@ impl SsTable {
         let block_meta = BlockMeta::decode_block_meta(&raw_meta[..]);
         Ok(Self {
             first_key: block_meta.first().unwrap().first_key.clone(),
-            last_key: block_meta.first().unwrap().last_key.clone(),
+            last_key: block_meta.last().unwrap().last_key.clone(),
             file,
             block_meta,
             block_meta_offset: block_meta_offset as usize,
             id,
             block_cache,
             bloom: None,
-            max_ts: u64::MAX,
+            max_ts: 0,
         })
     }
 
@@ -175,7 +175,7 @@ impl SsTable {
     ) -> Self {
         Self {
             file: FileObject(None, file_size),
-            block_meta: vec![],
+            block_meta: Vec::new(),
             block_meta_offset: 0,
             id,
             block_cache: None,
