@@ -73,11 +73,11 @@ impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
     fn is_valid(&self) -> bool {
-        self.inner.is_valid()
+        self.is_valid
     }
 
     fn key(&self) -> &[u8] {
-        self.inner.key().into_inner()
+        self.inner.key().raw_ref()
     }
 
     fn value(&self) -> &[u8] {
@@ -85,7 +85,7 @@ impl StorageIterator for LsmIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        self.inner.next()?;
+        self.next_inner()?;
         self.move_to_non_delete()?;
         Ok(())
     }

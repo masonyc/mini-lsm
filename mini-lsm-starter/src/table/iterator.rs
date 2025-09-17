@@ -67,7 +67,7 @@ impl SsTableIterator {
         key: KeySlice,
     ) -> Result<(usize, BlockIterator)> {
         let mut blk_idx = table.find_block_idx(key);
-        let block = table.read_block(blk_idx)?;
+        let block = table.read_block_cached(blk_idx)?;
         let mut blk_iter = BlockIterator::create_and_seek_to_key(block, key);
         if !blk_iter.is_valid() {
             blk_idx += 1;

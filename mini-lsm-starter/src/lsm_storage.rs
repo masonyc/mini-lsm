@@ -209,6 +209,12 @@ impl MiniLsm {
             handle.join().expect("compaction_thread panicked");
         }
 
+        while {
+            let snapshot = self.inner.state.read();
+            !snapshot.imm_memtables.is_empty()
+        } {
+            self.inner.force_flush_next_imm_memtable()?;
+        }
         Ok(())
     }
 
@@ -495,7 +501,9 @@ impl LsmStorageInner {
         {
             let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
-            snapshot.imm_memtables.pop();
+            let mem = snapshot.imm_memtables.pop().unwrap();
+            assert_eq!(mem.id(), sst_id);
+
             snapshot.l0_sstables.insert(0, sst_id);
             snapshot.sstables.insert(sst_id, sst);
             *guard = Arc::new(snapshot);
@@ -546,7 +554,7 @@ impl LsmStorageInner {
                             table,
                             KeySlice::from_slice(key),
                         )?;
-                        if iter.is_valid() && iter.key() == KeySlice::from_slice(key) {
+                        if iter.is_valid() && iter.key().raw_ref() == key {
                             iter.next()?;
                         }
                         iter

@@ -28,6 +28,16 @@ impl<T: AsRef<[u8]>> Key<T> {
     pub fn into_inner(self) -> T {
         self.0
     }
+    pub fn key_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+    pub fn key_len(&self) -> usize {
+        self.0.as_ref().len()
+    }
+
+    pub fn raw_len(&self) -> usize {
+        self.0.as_ref().len() + std::mem::size_of::<u64>()
+    }
 
     pub fn len(&self) -> usize {
         self.0.as_ref().len()
@@ -91,6 +101,9 @@ impl Key<Vec<u8>> {
 }
 
 impl Key<Bytes> {
+    pub fn new() -> Self {
+        Self(Bytes::new())
+    }
     pub fn as_key_slice(&self) -> KeySlice {
         Key(&self.0)
     }
