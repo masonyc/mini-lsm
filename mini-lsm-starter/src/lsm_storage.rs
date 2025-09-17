@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
-use std::fs::{File, create_dir};
+use std::fs::create_dir;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -130,6 +130,37 @@ impl LsmStorageOptions {
     }
 }
 
+fn range_overlap(
+    user_begin: Bound<&[u8]>,
+    user_end: Bound<&[u8]>,
+    table_begin: KeySlice,
+    table_end: KeySlice,
+) -> bool {
+    match user_end {
+        Bound::Excluded(key) if key <= table_begin.raw_ref() => {
+            return false;
+        }
+        Bound::Included(key) if key < table_begin.raw_ref() => {
+            return false;
+        }
+        _ => {}
+    }
+    match user_begin {
+        Bound::Excluded(key) if key >= table_end.raw_ref() => {
+            return false;
+        }
+        Bound::Included(key) if key > table_end.raw_ref() => {
+            return false;
+        }
+        _ => {}
+    }
+    true
+}
+
+fn key_within(user_key: &[u8], table_begin: KeySlice, table_end: KeySlice) -> bool {
+    table_begin.raw_ref() <= user_key && user_key <= table_end.raw_ref()
+}
+
 #[derive(Clone, Debug)]
 pub enum CompactionFilter {
     Prefix(Bytes),
@@ -171,7 +202,14 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        unimplemented!()
+        if let Some(handle) = self.flush_thread.lock().take() {
+            handle.join().expect("flush_thread panicked");
+        }
+        if let Some(handle) = self.compaction_thread.lock().take() {
+            handle.join().expect("compaction_thread panicked");
+        }
+
+        Ok(())
     }
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does not exist.
@@ -328,10 +366,16 @@ impl LsmStorageInner {
 
         for table_id in lsm_state.l0_sstables.iter() {
             let table = lsm_state.sstables[table_id].clone();
-            sst_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
-                table,
-                KeySlice::from_slice(key),
-            )?));
+            if key_within(
+                key,
+                table.first_key().as_key_slice(),
+                table.last_key().as_key_slice(),
+            ) {
+                sst_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
+                    table,
+                    KeySlice::from_slice(key),
+                )?));
+            }
         }
         let sst_iters = MergeIterator::create(sst_iters);
         if sst_iters.is_valid()
@@ -487,21 +531,30 @@ impl LsmStorageInner {
 
         for table_id in lsm_state.l0_sstables.iter() {
             let table = lsm_state.sstables[table_id].clone();
-            let iter = match lower {
-                Bound::Unbounded => SsTableIterator::create_and_seek_to_first(table)?,
-                Bound::Included(key) => {
-                    SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?
-                }
-                Bound::Excluded(key) => {
-                    let mut iter =
-                        SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?;
-                    if iter.is_valid() && iter.key() == KeySlice::from_slice(key) {
-                        iter.next()?;
+            if range_overlap(
+                lower,
+                upper,
+                table.first_key().as_key_slice(),
+                table.last_key().as_key_slice(),
+            ) {
+                let iter = match lower {
+                    Bound::Included(key) => {
+                        SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?
                     }
-                    iter
-                }
-            };
-            sst_iters.push(Box::new(iter));
+                    Bound::Excluded(key) => {
+                        let mut iter = SsTableIterator::create_and_seek_to_key(
+                            table,
+                            KeySlice::from_slice(key),
+                        )?;
+                        if iter.is_valid() && iter.key() == KeySlice::from_slice(key) {
+                            iter.next()?;
+                        }
+                        iter
+                    }
+                    Bound::Unbounded => SsTableIterator::create_and_seek_to_first(table)?,
+                };
+                sst_iters.push(Box::new(iter));
+            }
         }
         let merged_sst_iters = MergeIterator::create(sst_iters);
 
