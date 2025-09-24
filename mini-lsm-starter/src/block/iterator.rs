@@ -23,6 +23,16 @@ use crate::{
 
 use super::Block;
 
+impl Block {
+    fn get_first_key(&self) -> KeyVec {
+        let mut buf = &self.data[..];
+        buf.get_u16();
+        let key_len = buf.get_u16();
+        let key = &buf[..key_len as usize];
+        KeyVec::from_vec(key.to_vec())
+    }
+}
+
 /// Iterates on a block.
 pub struct BlockIterator {
     /// The internal `Block`, wrapped by an `Arc`
@@ -40,31 +50,25 @@ pub struct BlockIterator {
 impl BlockIterator {
     fn new(block: Arc<Block>) -> Self {
         Self {
+            first_key: block.get_first_key(),
             block,
             key: KeyVec::new(),
             value_range: (0, 0),
             idx: 0,
-            first_key: KeyVec::new(),
         }
     }
 
     /// Creates a block iterator and seek to the first entry.
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
         let mut iter = BlockIterator::new(block);
-
         iter.seek_to_first();
-        iter.first_key = iter.key.clone();
-
         iter
     }
 
     /// Creates a block iterator and seek to the first key that >= `key`.
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
         let mut iter = BlockIterator::new(block);
-
         iter.seek_to_key(key);
-        iter.first_key = iter.key.clone();
-
         iter
     }
 
@@ -102,13 +106,16 @@ impl BlockIterator {
 
     fn seek_to_offset(&mut self, offset: usize) {
         let mut entry = &self.block.data[offset..];
+        let overlap_len = entry.get_u16() as usize;
         let key_len = entry.get_u16() as usize;
-        let key = entry[..key_len].to_vec();
+        let key = &entry[..key_len];
+        self.key.clear();
+        self.key.append(&self.first_key.raw_ref()[..overlap_len]);
+        self.key.append(key);
         entry.advance(key_len);
-        self.key = Key::from_vec(key);
 
         let value_len = entry.get_u16() as usize;
-        let value_start = offset + SIZEOF_U16 + key_len + SIZEOF_U16;
+        let value_start = offset + SIZEOF_U16 + SIZEOF_U16 + key_len + SIZEOF_U16;
         let value_end = value_start + value_len;
         self.value_range = (value_start, value_end);
         entry.advance(value_len);
@@ -129,7 +136,7 @@ impl BlockIterator {
         while low < high {
             let mid = low + (high - low) / 2;
             self.seek_to(mid);
-            match self.key.cmp(&key.to_key_vec()) {
+            match self.key().cmp(&key) {
                 std::cmp::Ordering::Less => low = mid + 1,
                 std::cmp::Ordering::Greater => high = mid,
                 std::cmp::Ordering::Equal => return,

@@ -36,6 +36,7 @@ use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{MemTable, map_bound};
 use crate::mvcc::LsmMvccInner;
+use crate::table::bloom::Bloom;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
@@ -370,13 +371,24 @@ impl LsmStorageInner {
         // Then check SSTables
         let mut sst_iters = Vec::with_capacity(lsm_state.l0_sstables.len());
 
-        for table_id in lsm_state.l0_sstables.iter() {
-            let table = lsm_state.sstables[table_id].clone();
-            if key_within(
+        let keep_table = |key: &[u8], table: &SsTable| {
+            if !key_within(
                 key,
                 table.first_key().as_key_slice(),
                 table.last_key().as_key_slice(),
             ) {
+                return false;
+            }
+
+            if let Some(bloom) = &table.bloom {
+                return bloom.may_contain(farmhash::fingerprint32(key));
+            }
+            false
+        };
+        for table_id in lsm_state.l0_sstables.iter() {
+            let table = lsm_state.sstables[table_id].clone();
+
+            if keep_table(key, &table) {
                 sst_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
                     table,
                     KeySlice::from_slice(key),
